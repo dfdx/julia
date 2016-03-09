@@ -627,6 +627,29 @@ static size_t limit_overallocation(jl_array_t *a, size_t alen, size_t newlen, si
     return newlen;
 }
 
+JL_DLLEXPORT void jl_array_grow_at(jl_array_t *ary, ssize_t idx, size_t delta)
+{
+    size_t n = jl_array_nrows(ary);
+    size_t elsz = ary->elsize;
+    if (idx < 0 || idx > n)
+        jl_bounds_error_int((jl_value_t*)ary, idx + 1);
+    if (idx + 1 < n / 2) {
+        jl_array_grow_beg(ary, delta);
+        if (idx > 0) {
+            char *data = (char*)ary->data;
+            memmove(data, data + delta * elsz, idx * elsz);
+        }
+    }
+    else {
+        jl_array_grow_end(ary, delta);
+        if (n >= idx + 1) {
+            char *data = (char*)ary->data;
+            memmove(data + (idx + delta) * elsz, data + idx * elsz,
+                    (n - idx) * elsz);
+        }
+    }
+}
+
 JL_DLLEXPORT void jl_array_grow_end(jl_array_t *a, size_t inc)
 {
     if (a->flags.isshared && a->flags.how!=3) jl_error("cannot resize array with shared data");
@@ -644,38 +667,6 @@ JL_DLLEXPORT void jl_array_grow_end(jl_array_t *a, size_t inc)
     a->length += inc;
 #endif
     a->nrows += inc;
-}
-
-JL_DLLEXPORT void jl_array_del_end(jl_array_t *a, size_t dec)
-{
-    if (dec == 0) return;
-    if (dec > a->nrows)
-        jl_bounds_error_int((jl_value_t*)a, a->nrows - dec);
-    if (a->flags.isshared) array_try_unshare(a);
-    if (a->elsize > 0) {
-        char *ptail = (char*)a->data + (a->nrows-dec)*a->elsize;
-        assert(ptail < (char*)a->data + (a->length*a->elsize));
-        if (a->flags.ptrarray)
-            memset(ptail, 0, dec*a->elsize);
-        else
-            ptail[0] = 0;
-    }
-#ifdef STORE_ARRAY_LEN
-    a->length -= dec;
-#endif
-    a->nrows -= dec;
-}
-
-JL_DLLEXPORT void jl_array_sizehint(jl_array_t *a, size_t sz)
-{
-    if (sz <= jl_array_len(a))
-        return;
-    size_t inc = sz - jl_array_len(a);
-    jl_array_grow_end(a, inc);
-#ifdef STORE_ARRAY_LEN
-    a->length -= inc;
-#endif
-    a->nrows -= inc;
 }
 
 JL_DLLEXPORT void jl_array_grow_beg(jl_array_t *a, size_t inc)
@@ -720,6 +711,28 @@ JL_DLLEXPORT void jl_array_grow_beg(jl_array_t *a, size_t inc)
     a->nrows += inc;
 }
 
+JL_DLLEXPORT void jl_array_del_at(jl_array_t *ary, ssize_t idx, size_t delta)
+{
+    size_t n = jl_array_nrows(ary);
+    size_t elsz = ary->elsize;
+    size_t last = idx + delta;
+    char *data = (char*)ary->data;
+    if (idx < 0)
+        jl_bounds_error_int((jl_value_t*)ary, idx + 1);
+    if (last > n)
+        jl_bounds_error_int((jl_value_t*)ary, last);
+    if (idx < n - last) {
+        if (idx > 0)
+            memmove(data + delta * elsz, data, idx * elsz);
+        jl_array_del_beg(ary, delta);
+    }
+    else {
+        if (n > last)
+            memmove(data + idx * elsz, data + last * elsz, (n - last) * elsz);
+        jl_array_del_end(ary, delta);
+    }
+}
+
 JL_DLLEXPORT void jl_array_del_beg(jl_array_t *a, size_t dec)
 {
     if (dec == 0) return;
@@ -755,6 +768,70 @@ JL_DLLEXPORT void jl_array_del_beg(jl_array_t *a, size_t dec)
         memmove(a->data, (char*)a->data + delta, anb);
     }
     a->offset = newoffs;
+}
+
+JL_DLLEXPORT void jl_array_del_end(jl_array_t *a, size_t dec)
+{
+    if (dec == 0) return;
+    if (dec > a->nrows)
+        jl_bounds_error_int((jl_value_t*)a, a->nrows - dec);
+    if (a->flags.isshared) array_try_unshare(a);
+    if (a->elsize > 0) {
+        char *ptail = (char*)a->data + (a->nrows-dec)*a->elsize;
+        assert(ptail < (char*)a->data + (a->length*a->elsize));
+        if (a->flags.ptrarray)
+            memset(ptail, 0, dec*a->elsize);
+        else
+            ptail[0] = 0;
+    }
+#ifdef STORE_ARRAY_LEN
+    a->length -= dec;
+#endif
+    a->nrows -= dec;
+}
+
+JL_DLLEXPORT void jl_array_sizehint(jl_array_t *a, size_t sz)
+{
+    if (sz <= jl_array_len(a))
+        return;
+    size_t inc = sz - jl_array_len(a);
+    jl_array_grow_end(a, inc);
+#ifdef STORE_ARRAY_LEN
+    a->length -= inc;
+#endif
+    a->nrows -= inc;
+}
+
+JL_DLLEXPORT jl_array_t *jl_array_copy(jl_array_t *ary)
+{
+    jl_array_t *new_ary = _new_array(jl_typeof(ary), jl_array_ndims(ary),
+                                     &ary->nrows);
+    memcpy(new_ary->data, ary->data, jl_array_len(ary) * ary->elsize);
+    return new_ary;
+}
+
+JL_DLLEXPORT jl_array_t *jl_array_vcat_vectors(jl_value_t *arrays)
+{
+    size_t narys = jl_nfields(arrays);
+    assert(jl_is_tuple(arrays) && narys > 0);
+    jl_value_t *atype = jl_typeof(jl_data_ptr(arrays)[0]);
+    size_t total_len = 0;
+    for (size_t i = 0;i < narys;i++) {
+        jl_array_t *ary = (jl_array_t*)(jl_data_ptr(arrays)[i]);
+        assert(jl_typeof(ary) == atype);
+        total_len += jl_array_len(ary);
+    }
+    jl_array_t *new_ary = _new_array(atype, 1, &total_len);
+    size_t elsz = new_ary->elsize;
+    char *data = (char*)new_ary->data;
+    size_t offset = 0;
+    for (size_t i = 0;i < narys;i++) {
+        jl_array_t *ary = (jl_array_t*)(jl_data_ptr(arrays)[i]);
+        size_t nba = jl_array_len(ary) * elsz;
+        memcpy(data + offset, ary->data, nba);
+        offset += nba;
+    }
+    return new_ary;
 }
 
 JL_DLLEXPORT void jl_cell_1d_push(jl_array_t *a, jl_value_t *item)
