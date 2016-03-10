@@ -97,12 +97,15 @@
 #include <llvm/ExecutionEngine/Interpreter.h>
 #endif
 
+using namespace llvm;
+
 #if defined(_OS_WINDOWS_) && !defined(NOMINMAX)
 #define NOMINMAX
 #endif
 
 #include "julia.h"
 #include "julia_internal.h"
+#include "codegen_internal.h"
 
 #include <setjmp.h>
 
@@ -114,7 +117,6 @@
 #include <set>
 #include <cstdio>
 #include <cassert>
-using namespace llvm;
 
 // LLVM version compatibility macros
 #ifdef LLVM37
@@ -1307,21 +1309,6 @@ void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name)
 }
 
 // --- native code info, and dump function to IR and ASM ---
-
-extern int jl_DI_for_fptr(uint64_t fptr, uint64_t *symsize, int64_t *slide, int64_t *SectionSlide,
-                      const object::ObjectFile **object,
-#ifdef USE_MCJIT
-                      llvm::DIContext **context
-#else
-                      std::vector<JITEvent_EmittedFunctionDetails::LineStart> *lines
-#endif
-                      );
-extern bool jl_dylib_DI_for_fptr(size_t pointer, const object::ObjectFile **object, llvm::DIContext **context, int64_t *slide, bool onlySysImg,
-    bool *isSysImg, void **saddr, char **name, char **filename);
-#ifdef USE_MCJIT
-extern void jl_cleanup_DI(llvm::DIContext *context);
-#endif
-
 // Get pointer to llvm::Function instance, compiling if necessary
 extern "C" JL_DLLEXPORT
 void *jl_get_llvmf(jl_function_t *f, jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
@@ -1476,21 +1463,6 @@ const jl_value_t *jl_dump_function_ir(void *f, bool strip_ir_metadata, bool dump
 
     return jl_cstr_to_string(const_cast<char*>(stream.str().c_str()));
 }
-
-// Pre-declaration. Definition in disasm.cpp
-extern "C"
-void jl_dump_asm_internal(uintptr_t Fptr, size_t Fsize, size_t slide,
-#ifdef USE_MCJIT
-                          llvm::DIContext *context,
-#else
-                          std::vector<JITEvent_EmittedFunctionDetails::LineStart> lineinfo,
-#endif
-#ifdef LLVM37
-                          raw_ostream &rstream
-#else
-                          formatted_raw_ostream &stream
-#endif
-                          );
 
 // This is expensive, but it's only used for interactive mode
 static uint64_t compute_obj_symsize(const object::ObjectFile *obj, uint64_t offset)

@@ -43,8 +43,11 @@
 #include "../deps/llvm-3.5.0/lib/ExecutionEngine/MCJIT/MCJIT.h"
 #endif
 
+using namespace llvm;
+
 #include "julia.h"
 #include "julia_internal.h"
+#include "codegen_internal.h"
 #ifdef _OS_LINUX_
 #  define UNW_LOCAL_ONLY
 #  include <libunwind.h>
@@ -58,7 +61,6 @@
 #include <set>
 #include <cstdio>
 #include <cassert>
-using namespace llvm;
 
 #if defined(LLVM35) && !defined(LLVM36)
 extern ExecutionEngine *jl_ExecutionEngine;
@@ -401,7 +403,7 @@ public:
                 linfomap[Addr] = linfo;
             if (first) {
                 ObjectInfo tmp = {&debugObj,
-                    SectionSize,
+                    (size_t)SectionSize,
 #ifdef LLVM39
                     new DWARFContextInMemory(debugObj, &L),
 #else
@@ -749,7 +751,7 @@ bool jl_dylib_DI_for_fptr(size_t pointer, const llvm::object::ObjectFile **obj, 
     Dl_info dlinfo;
     if ((dladdr((void*)pointer, &dlinfo) != 0) && dlinfo.dli_fname) {
         const char *fname;
-        uint64_t fbase = (uint64_t)dlinfo.dli_fbase;
+        uint64_t fbase = (uintptr_t)dlinfo.dli_fbase;
         if (saddr)
             *saddr = dlinfo.dli_saddr;
 #if defined(_OS_DARWIN_)
@@ -853,7 +855,7 @@ bool jl_dylib_DI_for_fptr(size_t pointer, const llvm::object::ObjectFile **obj, 
 #else
                     *context = DIContext::getDWARFContext(*obj);
 #endif
-                    *slide = -(uint64_t)fbase;
+                    *slide = -(int64_t)fbase;
 #ifdef _OS_DARWIN_
                 }
 #endif
@@ -978,7 +980,7 @@ int jl_DI_for_fptr(uint64_t fptr, uint64_t *symsize, int64_t *slide, int64_t *Se
         *symsize = 0;
         *slide = 0;
         *object = fit->second.object;
-        *SectionSlide = -fit->first;
+        *SectionSlide = -(int64_t)fit->first;
 #if defined(LLVM39)
         *context = fit->second.context;
 #elif defined(LLVM37)
