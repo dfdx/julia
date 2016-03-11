@@ -696,7 +696,7 @@ static jl_lambda_info_t **sysimg_fvars_linfo;
 static size_t sysimg_fvars_n;
 extern "C" void jl_register_fptrs(uint64_t sysimage_base, void **fptrs, jl_lambda_info_t **linfos, size_t n)
 {
-    jl_sysimage_base = sysimage_base;
+    jl_sysimage_base = (uintptr_t)sysimage_base;
     sysimg_fvars = fptrs;
     sysimg_fvars_linfo = linfos;
     sysimg_fvars_n = n;
