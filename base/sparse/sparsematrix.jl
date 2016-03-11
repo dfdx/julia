@@ -26,6 +26,39 @@ end
 
 size(S::SparseMatrixCSC) = (S.m, S.n)
 
+## generic iteration support
+
+# Indexing along a particular column
+immutable ColIndexCSC
+    cscindex::Int
+    rowval::Int
+end
+
+getindex(A::SparseMatrixCSC, i::ColIndexCSC, j::Integer) = A.nzval[i.cscindex]
+getindex(a::AbstractVector, i::ColIndexCSC) = a[i.rowval]
+
+setindex!(A::SparseMatrixCSC, val, i::ColIndexCSC, j::Integer) = A.nzval[i.cscindex] = val
+setindex!(a::AbstractVector, val, i::ColIndexCSC) = a[i.rowval] = val
+
+immutable ColIteratorCSC{S<:SparseMatrixCSC}
+    A::S
+    col::Int
+
+    function ColIteratorCSC(A, col)
+        @boundscheck 1 <= col <= size(A, 2) || throw(BoundsError(A, (:,col)))
+        new(A, col)
+    end
+end
+ColIteratorCSC(A::SparseMatrixCSC, col::Integer) = ColIteratorCSC{typeof(A)}(A, col)
+
+length(i::ColIteratorCSC) = (c = i.A.colptr; Int(c[i.col+1] - c[i.col]))
+start(i::ColIteratorCSC) = i.A.colptr[i.col]
+done(i::ColIteratorCSC, s) = s >= i.A.colptr[i.col+1]
+next(i::ColIteratorCSC, s) = ColIndexCSC(s, i.A.rowval[s]), s+1
+
+Base._eachindex(::Tuple{}, ::Tuple{}, A::SparseMatrixCSC, ::Colon, col::Integer) = ColIteratorCSC(A, col)
+
+
 """
     nnz(A)
 
